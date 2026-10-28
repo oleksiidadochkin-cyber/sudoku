@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);box-sizing:border-box}body{margin:0;font:14px system-ui}[hidden]{display:none!important}</style>
+<title>Судоку с подсказками</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600&family=Onest:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: board on the left, a tool column on the right (stacks under the board on phones). Ink-on-slate puzzle sheet with a vermilion pencil for hints. */
+:root{
+  --bg:#e7edef; --paper:#fbfcfc; --ink:#14313a; --muted:#5b7077; --line:#c8d4d7; --line-strong:#14313a;
+  --accent:#d4553a; --accent-soft:#f7dcd3; --zone:#e2edef; --same:#c3e0e5; --sel:#9fd0d9;
+  --user:#1c6a86; --err:#cc3434; --err-soft:#f8d8d5; --btn:#ffffff; --btn-line:#c8d4d7;
+  --f-digit:"Rubik", system-ui, sans-serif;
+  --f-ui:"Onest", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0e1b20; --paper:#15262c; --ink:#e3edef; --muted:#8ba3a9; --line:#2a3e45; --line-strong:#8fb1b8;
+  --accent:#f07a5c; --accent-soft:#4b2a22; --zone:#1b3037; --same:#22505a; --sel:#2c6b77;
+  --user:#86cfe2; --err:#ff6f6f; --err-soft:#4a2325; --btn:#1a2d33; --btn-line:#2f474e; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0e1b20; --paper:#15262c; --ink:#e3edef; --muted:#8ba3a9; --line:#2a3e45; --line-strong:#8fb1b8;
+  --accent:#f07a5c; --accent-soft:#4b2a22; --zone:#1b3037; --same:#22505a; --sel:#2c6b77;
+  --user:#86cfe2; --err:#ff6f6f; --err-soft:#4a2325; --btn:#1a2d33; --btn-line:#2f474e; color-scheme:dark}
+
+body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);
+  padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));
+  -webkit-tap-highlight-color:transparent}
+.wrap{max-width:940px;margin:0 auto;padding-block:16px 24px}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+h1{font:700 30px/1 var(--f-ui);letter-spacing:-.02em;margin:0;display:flex;align-items:center;gap:10px}
+.mark{width:30px;height:30px;display:grid;grid-template-columns:repeat(3,1fr);gap:2px;padding:3px;background:var(--ink);border-radius:5px}
+.mark i{background:var(--paper);border-radius:1px}
+.mark i:nth-child(5){background:var(--accent)}
+.diff{font:600 12px var(--f-ui);letter-spacing:.08em;text-transform:uppercase;color:var(--accent);border:1.5px solid currentColor;border-radius:999px;padding:4px 10px}
+.stats{margin-left:auto;display:flex;gap:18px;font-variant-numeric:tabular-nums}
+.stat{display:flex;flex-direction:column;align-items:flex-end}
+.stat b{font:600 19px/1.1 var(--f-digit)}
+.stat span{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+
+.game{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:22px;align-items:start}
+.board-wrap{position:relative;container-type:inline-size;width:min(100%, 600px, calc(100dvh - 120px));justify-self:center}
+#board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(3,minmax(0,1fr));gap:2.5px;background:var(--line-strong);border:2.5px solid var(--line-strong);border-radius:10px;overflow:hidden;
+  aspect-ratio:1;max-width:100%;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+.box{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(3,minmax(0,1fr));gap:1px;background:var(--line);min-width:0;min-height:0}
+.cell{background:var(--paper);position:relative;min-width:0;min-height:0;overflow:hidden;display:grid;place-items:center;cursor:pointer;font-family:var(--f-digit);
+  font-size:calc(100cqw / 9 * .56);font-weight:500;color:var(--user);line-height:1;transition:background-color .12s}
+.cell.given{color:var(--ink);font-weight:600}
+.cell.zone{background:var(--zone)}
+.cell.same{background:var(--same)}
+.cell.sel{background:var(--sel)}
+.cell.err{color:var(--err)}
+.cell.err.sel, .cell.err{background:var(--err-soft)}
+.cell.h-zone{background:var(--accent-soft)}
+.cell.h-why{box-shadow:inset 0 0 0 2px var(--accent)}
+.cell.h-target{background:var(--accent);color:#fff}
+.cell.h-target .notes{color:#fff}
+.cell.pop{animation:pop .25s ease}
+@keyframes pop{50%{transform:scale(1.15)}}
+.notes{position:absolute;inset:6%;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);
+  font-size:calc(100cqw / 9 * .24);font-weight:500;color:var(--muted);text-align:center;align-items:center}
+.notes b{font-weight:600;color:var(--accent)}
+.gen{position:absolute;inset:0;display:grid;place-items:center;background:color-mix(in srgb, var(--bg) 70%, transparent);border-radius:10px;font-weight:500;color:var(--muted)}
+
+.side{display:flex;flex-direction:column;gap:12px;min-width:0}
+.hint{background:var(--paper);border:1.5px solid var(--accent);border-radius:14px;padding:14px 16px;box-shadow:0 8px 24px rgba(20,49,58,.08)}
+.hint h3{margin:0 0 6px;font:600 12px var(--f-ui);letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+.hint p{margin:0 0 8px;line-height:1.45;font-size:15px}
+.hint p:last-of-type{margin-bottom:12px}
+.hint .row{display:flex;gap:8px;flex-wrap:wrap}
+.tools{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.tool{display:flex;flex-direction:column;align-items:center;gap:5px;background:none;border:none;color:var(--ink);font:500 12px var(--f-ui);cursor:pointer;padding:6px 2px;border-radius:10px}
+.tool .ic{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:var(--btn);border:1px solid var(--btn-line);position:relative}
+.tool svg{width:20px;height:20px}
+.tool[aria-pressed="true"] .ic{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.tool .badge{position:absolute;top:-4px;right:-6px;background:var(--accent);color:#fff;font:600 10px var(--f-ui);border-radius:999px;padding:2px 5px}
+.tool:disabled{opacity:.4;cursor:default}
+.tool:focus-visible,.key:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.key{aspect-ratio:1.35;border-radius:12px;background:var(--btn);border:1px solid var(--btn-line);color:var(--ink);cursor:pointer;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;font:500 28px/1 var(--f-digit);transition:transform .08s}
+.key small{font:500 10px var(--f-ui);color:var(--muted);margin-top:3px}
+.key:active{transform:scale(.95)}
+.key:disabled{opacity:.3;cursor:default}
+.key.notes-mode{color:var(--accent)}
+.btn{font:500 14px/1 var(--f-ui);color:var(--ink);background:var(--btn);border:1px solid var(--btn-line);border-radius:10px;padding:11px 14px;cursor:pointer}
+.btn.primary{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.btn.accent{background:var(--accent);border-color:var(--accent);color:#fff}
+.opts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.switch{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted);cursor:pointer}
+.switch input{accent-color:var(--accent);width:18px;height:18px}
+
+.overlay{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:rgba(8,20,24,.5);padding:16px}
+.card{background:var(--paper);color:var(--ink);border-radius:20px;padding:24px;width:100%;max-width:420px;box-shadow:0 30px 70px rgba(0,0,0,.3);max-height:100%;overflow:auto;box-sizing:border-box}
+.card h2{font:700 26px/1.1 var(--f-ui);margin:0 0 6px;letter-spacing:-.01em}
+.card p{color:var(--muted);margin:0 0 16px;line-height:1.4}
+.levels{display:grid;gap:8px}
+.lv{display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px 12px;text-align:left;background:var(--btn);border:1px solid var(--btn-line);border-radius:12px;padding:12px 14px;cursor:pointer;color:var(--ink);font-family:var(--f-ui)}
+.lv b{font-size:16px;font-weight:600}
+.lv span{font-size:13px;color:var(--muted);grid-column:1}
+.lv em{font-style:normal;font-size:12px;color:var(--muted);grid-row:1 / span 2;grid-column:2;text-align:right;font-variant-numeric:tabular-nums}
+.lv:hover{border-color:var(--ink)}
+.lv[aria-current="true"]{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.card .row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}
+.big{font:600 40px/1 var(--f-digit);margin:4px 0 8px;font-variant-numeric:tabular-nums}
+
+@media (max-width:760px){
+  .wrap{padding-block:10px 18px}
+  header{margin-bottom:10px;gap:8px;flex-wrap:nowrap}
+  h1{font-size:21px;gap:7px}
+  .mark{width:22px;height:22px}
+  .diff{font-size:10px;padding:3px 7px}
+  .stats{gap:10px}
+  .stat b{font-size:15px}
+  .stat span{font-size:9px;letter-spacing:.03em}
+  .key .w{display:none}
+  .game{grid-template-columns:1fr;gap:12px}
+  .board-wrap{width:min(100%, calc(100dvh - 330px));min-width:min(100%, 300px)}
+  .pad{grid-template-columns:repeat(9,1fr);gap:4px}
+  .key{aspect-ratio:.78;font-size:24px;border-radius:9px}
+  .tools{order:-1}
+  .tool .ic{width:40px;height:40px}
+  .hint{order:-2}
+}
+@media (prefers-reduced-motion:reduce){.cell.pop{animation:none}.key{transition:none}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header>
+  <h1><span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>Судоку</h1>
+  <span class="diff" id="diff">Средний</span>
+  <div class="stats">
+    <div class="stat"><b id="sTime">0:00</b><span>Время</span></div>
+    <div class="stat"><b id="sErr">0</b><span>Ошибки</span></div>
+    <div class="stat"><b id="sHint">0</b><span>Подсказки</span></div>
+  </div>
+</header>
+
+<div class="game">
+  <div class="board-wrap">
+    <div id="board" role="grid" aria-label="Поле судоку"></div>
+    <div class="gen" id="gen" hidden>Готовлю головоломку…</div>
+  </div>
+  <div class="side">
+    <div class="hint" id="hint" hidden aria-live="polite"></div>
+    <div class="tools">
+      <button class="tool" id="tUndo"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></span>Отменить</button>
+      <button class="tool" id="tErase"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3a1 1 0 0 1 0-1.4l10-10a1 1 0 0 1 1.4 0l5.6 5.6a1 1 0 0 1 0 1.4L12 20.1"/><path d="M7 21h14"/><path d="m5 11 9 9"/></svg></span>Стереть</button>
+      <button class="tool" id="tNotes" aria-pressed="false"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>Заметки</button>
+      <button class="tool" id="tAuto"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r=".8" fill="currentColor"/><circle cx="12" cy="8" r=".8" fill="currentColor"/><circle cx="16" cy="8" r=".8" fill="currentColor"/><circle cx="8" cy="12" r=".8" fill="currentColor"/><circle cx="16" cy="12" r=".8" fill="currentColor"/><circle cx="8" cy="16" r=".8" fill="currentColor"/><circle cx="12" cy="16" r=".8" fill="currentColor"/></svg></span>Все заметки</button>
+      <button class="tool" id="tHint"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V17h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>Подсказка</button>
+    </div>
+    <div class="pad" id="pad"></div>
+    <div class="opts">
+      <button class="btn primary" id="bNew">Новая игра</button>
+      <label class="switch"><input type="checkbox" id="optErr" checked> Показывать ошибки</label>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+(() => {
+// ================= Geometry =================
+const R = i => (i / 9) | 0, C = i => i % 9, B = i => ((R(i) / 3) | 0) * 3 + ((C(i) / 3) | 0);
+const HOUSES = [];
+for (let n = 0; n < 9; n++) {
+  HOUSES.push({ k: 'row', n, cells: [...Array(9)].map((_, j) => n * 9 + j) });
+}
+for (let n = 0; n < 9; n++) HOUSES.push({ k: 'col', n, cells: [...Array(9)].map((_, j) => j * 9 + n) });
+for (let n = 0; n < 9; n++) {
+  const r0 = ((n / 3) | 0) * 3, c0 = (n % 3) * 3;
+  HOUSES.push({ k: 'box', n, cells: [...Array(9)].map((_, j) => (r0 + ((j / 3) | 0)) * 9 + c0 + (j % 3)) });
+}
+const ROWS = HOUSES.slice(0, 9), COLS = HOUSES.slice(9, 18), BOXES = HOUSES.slice(18);
+const PEERS = [...Array(81)].map((_, i) => {
+  const s = new Set([...ROWS[R(i)].cells, ...COLS[C(i)].cells, ...BOXES[B(i)].cells]); s.delete(i); return [...s];
+});
+const bit = d => 1 << (d - 1);
+const pop = m => { let n = 0; while (m) { m &= m - 1; n++; } return n; };
+const digits = m => { const a = []; for (let d = 1; d <= 9; d++) if (m & bit(d)) a.push(d); return a; };
+const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+
+// ================= Fast solver (counting) =================
+function solve(grid, limit = 2, random = false) {
+  const a = grid.slice(), rm = new Array(9).fill(0), cm = new Array(9).fill(0), bm = new Array(9).fill(0);
+  for (let i = 0; i < 81; i++) if (a[i]) {
+    const b = bit(a[i]);
+    if ((rm[R(i)] | cm[C(i)] | bm[B(i)]) & b) return { count: 0 };
+    rm[R(i)] |= b; cm[C(i)] |= b; bm[B(i)] |= b;
+  }
+  let count = 0, sol = null;
+  (function rec() {
+    let best = -1, bestM = 0, bestN = 10;
+    for (let i = 0; i < 81; i++) if (!a[i]) {
+      const m = ~(rm[R(i)] | cm[C(i)] | bm[B(i)]) & 511, n = pop(m);
+      if (!n) return;
+      if (n < bestN) { best = i; bestM = m; bestN = n; if (n === 1) break; }
+    }
+    if (best < 0) { count++; if (!sol) sol = a.slice(); return; }
+    const ds = digits(bestM); if (random) shuffle(ds);
+    const r = R(best), c = C(best), bx = B(best);
+    for (const d of ds) {
+      const b = bit(d);
+      a[best] = d; rm[r] |= b; cm[c] |= b; bm[bx] |= b;
+      rec();
+      a[best] = 0; rm[r] &= ~b; cm[c] &= ~b; bm[bx] &= ~b;
+      if (count >= limit) return;
+    }
+  })();
+  return { count, sol };
+}
+
+// ================= Logic engine (used for rating AND for hints) =================
+function initState(vals) {
+  const v = vals.slice(), c = new Array(81).fill(0);
+  for (let i = 0; i < 81; i++) if (!v[i]) {
+    let m = 511; PEERS[i].forEach(p => { if (v[p]) m &= ~bit(v[p]); }); c[i] = m;
+  }
+  return { v, c };
+}
+function place(st, i, d) { st.v[i] = d; st.c[i] = 0; PEERS[i].forEach(p => st.c[p] &= ~bit(d)); }
+function findSingle(st) {
+  const { v, c } = st;
+  for (const h of HOUSES) {
+    const empty = h.cells.filter(i => !v[i]);
+    if (empty.length === 1) {
+      let have = 0; h.cells.forEach(i => { if (v[i]) have |= bit(v[i]); });
+      const m = 511 & ~have; if (pop(m) === 1) return { t: 'last', i: empty[0], d: digits(m)[0], h };
+    }
+  }
+  for (const group of [BOXES, ROWS, COLS]) for (const h of group) for (let d = 1; d <= 9; d++) {
+    if (h.cells.some(i => v[i] === d)) continue;
+    const spots = h.cells.filter(i => !v[i] && c[i] & bit(d));
+    if (spots.length === 1) return { t: 'hidden', i: spots[0], d, h };
+  }
+  for (let i = 0; i < 81; i++) if (!v[i] && pop(c[i]) === 1) return { t: 'naked', i, d: digits(c[i])[0] };
+  return null;
+}
+function elimList(st, cells, mask) { const e = []; cells.forEach(i => { if (!st.v[i] && st.c[i] & mask) e.push([i, st.c[i] & mask]); }); return e; }
+function findElim(st) {
+  const { v, c } = st;
+  // Locked candidates: pointing (box -> line) and claiming (line -> box)
+  for (const bx of BOXES) for (let d = 1; d <= 9; d++) {
+    const sp = bx.cells.filter(i => !v[i] && c[i] & bit(d)); if (sp.length < 2) continue;
+    for (const [fn, LINES, kind] of [[R, ROWS, 'row'], [C, COLS, 'col']]) {
+      if (sp.every(i => fn(i) === fn(sp[0]))) {
+        const line = LINES[fn(sp[0])];
+        const e = elimList(st, line.cells.filter(i => B(i) !== bx.n), bit(d));
+        if (e.length) return { t: 'pointing', rank: 2, d, box: bx, line, cells: sp, elim: e };
+      }
+    }
+  }
+  for (const line of [...ROWS, ...COLS]) for (let d = 1; d <= 9; d++) {
+    const sp = line.cells.filter(i => !v[i] && c[i] & bit(d)); if (sp.length < 2) continue;
+    if (sp.every(i => B(i) === B(sp[0]))) {
+      const bx = BOXES[B(sp[0])];
+      const e = elimList(st, bx.cells.filter(i => !line.cells.includes(i)), bit(d));
+      if (e.length) return { t: 'claiming', rank: 2, d, box: bx, line, cells: sp, elim: e };
+    }
+  }
+  // Naked pairs
+  for (const h of HOUSES) {
+    const e2 = h.cells.filter(i => !v[i] && pop(c[i]) === 2);
+    for (let x = 0; x < e2.length; x++) for (let y = x + 1; y < e2.length; y++) if (c[e2[x]] === c[e2[y]]) {
+      const m = c[e2[x]];
+      const e = elimList(st, h.cells.filter(i => i !== e2[x] && i !== e2[y]), m);
+      if (e.length) return { t: 'npair', rank: 3, h, cells: [e2[x], e2[y]], ds: digits(m), elim: e };
+    }
+  }
+  // Hidden pairs
+  for (const h of HOUSES) {
+    const pos = {};
+    for (let d = 1; d <= 9; d++) { const sp = h.cells.filter(i => !v[i] && c[i] & bit(d)); if (sp.length === 2) pos[d] = sp; }
+    const ds = Object.keys(pos).map(Number);
+    for (let x = 0; x < ds.length; x++) for (let y = x + 1; y < ds.length; y++) {
+      const a = pos[ds[x]], b = pos[ds[y]];
+      if (a[0] === b[0] && a[1] === b[1]) {
+        const keep = bit(ds[x]) | bit(ds[y]);
+        const e = a.filter(i => c[i] & ~keep).map(i => [i, c[i] & ~keep]);
+        if (e.length) return { t: 'hpair', rank: 3, h, cells: a, ds: [ds[x], ds[y]], elim: e };
+      }
+    }
+  }
+  // X-wing
+  for (let d = 1; d <= 9; d++) for (const [A, Bv, fa, fb] of [[ROWS, COLS, C, R], [COLS, ROWS, R, C]]) {
+    const two = A.map(h => h.cells.filter(i => !v[i] && c[i] & bit(d))).map((sp, n) => ({ n, sp })).filter(o => o.sp.length === 2);
+    for (let x = 0; x < two.length; x++) for (let y = x + 1; y < two.length; y++) {
+      const p = two[x].sp.map(fa), q = two[y].sp.map(fa);
+      if (p[0] === q[0] && p[1] === q[1]) {
+        const lines = [two[x].n, two[y].n], cells = [...two[x].sp, ...two[y].sp];
+        const e = elimList(st, [...Bv[p[0]].cells, ...Bv[p[1]].cells].filter(i => !lines.includes(fb(i))), bit(d));
+        if (e.length) return { t: 'xwing', rank: 4, d, byRow: A === ROWS, lines, others: p, cells, elim: e };
+      }
+    }
+  }
+  return null;
+}
+function applyElim(st, e) { e.elim.forEach(([i, m]) => st.c[i] &= ~m); }
+function rate(puzzle) {
+  const st = initState(puzzle); let maxR = 0;
+  for (let guard = 0; guard < 400; guard++) {
+    if (st.v.every(Boolean)) return maxR;
+    const s = findSingle(st); if (s) { place(st, s.i, s.d); maxR = Math.max(maxR, 1); continue; }
+    const e = findElim(st); if (e) { applyElim(st, e); maxR = Math.max(maxR, e.rank); continue; }
+    return 99;
+  }
+  return 99;
+}
+
+// ================= Generator =================
+const LEVELS = {
+  easy:   { name: 'Лёгкий',  desc: 'Много открытых цифр, решается простыми шагами.', clues: 38, ok: r => r === 1 },
+  medium: { name: 'Средний', desc: 'Меньше подсказок на поле, но хватает простых приёмов.', clues: 30, ok: r => r === 1 },
+  hard:   { name: 'Сложный', desc: 'Понадобится приём «цифра заперта в строке или квадрате».', clues: 0, ok: r => r === 2 },
+  expert: { name: 'Эксперт', desc: 'Пары цифр и «крестокрыл». Для тех, кто любит подумать.', clues: 0, ok: r => r >= 3 && r < 99 },
+};
+function makeOne(level) {
+  const full = solve(new Array(81).fill(0), 1, true).sol;
+  const p = full.slice(), order = shuffle([...Array(81).keys()]);
+  const target = LEVELS[level].clues;
+  let clues = 81;
+  for (const i of order) {
+    if (target && clues <= target) break;
+    const keep = p[i]; p[i] = 0;
+    if (solve(p, 2).count !== 1) p[i] = keep; else clues--;
+  }
+  return { puzzle: p, sol: full, rank: rate(p) };
+}
+async function generate(level) {
+  const t0 = performance.now(); let fallback = null;
+  for (let k = 0; k < 400; k++) {
+    const g = makeOne(level);
+    if (LEVELS[level].ok(g.rank)) return g;
+    if (g.rank < 99 && (!fallback || Math.abs(g.rank - 3) < Math.abs(fallback.rank - 3))) fallback = g;
+    if (performance.now() - t0 > 6000 && fallback) return fallback;
+    if (k % 3 === 2) await new Promise(r => setTimeout(r, 0));
+  }
+  return fallback || makeOne('easy');
+}
+
+// ================= State =================
+const store = { get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }, set(k,v){ try { localStorage.setItem(k,v); } catch(e){} } };
+let G = null, sel = -1, notesMode = false, hint = null, runStart = 0, highlightDigit = 0;
+let prefs = { showErr: true, level: 'medium' };
+try { Object.assign(prefs, JSON.parse(store.get('sudoku-prefs') || '{}')); } catch (e) {}
+let bests = {}; try { bests = JSON.parse(store.get('sudoku-best') || '{}') || {}; } catch (e) {}
+const savePrefs = () => store.set('sudoku-prefs', JSON.stringify(prefs));
+function save() { if (G) store.set('sudoku-v1', JSON.stringify(Object.assign({}, G, { elapsed: elapsed() }))); }
+const elapsed = () => G ? G.elapsed + (runStart ? Date.now() - runStart : 0) : 0;
+const fmt = ms => { const t = Math.floor(ms / 1000), h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0'); };
+function startClock() { if (!runStart && G && !G.won && !document.hidden) runStart = Date.now(); }
+function stopClock() { if (runStart && G) { G.elapsed += Date.now() - runStart; runStart = 0; } }
+
+let genToken = 0;
+async function newGame(level) {
+  prefs.level = level; savePrefs();
+  closeOverlay(); setHint(null);
+  const tok = ++genToken;
+  $('gen').hidden = false;
+  await new Promise(r => setTimeout(r, 30));
+  const g = await generate(level);
+  if (tok !== genToken) return;
+  $('gen').hidden = true;
+  stopClock();
+  G = { level, given: g.puzzle.map(Boolean), vals: g.puzzle.slice(), sol: g.sol, notes: new Array(81).fill(0),
+        history: [], elapsed: 0, mistakes: 0, hints: 0, won: false };
+  sel = -1; highlightDigit = 0; runStart = 0;
+  startClock(); render(); save();
+}
+
+// ================= Rendering =================
+const $ = id => document.getElementById(id);
+const board = $('board'), cells = [];
+for (let b = 0; b < 9; b++) {
+  const box = document.createElement('div'); box.className = 'box';
+  BOXES[b].cells.forEach(i => {
+    const d = document.createElement('div'); d.className = 'cell'; d.dataset.i = i; d.setAttribute('role', 'gridcell');
+    cells[i] = d; box.appendChild(d);
+  });
+  board.appendChild(box);
+}
+const pad = $('pad');
+for (let d = 1; d <= 9; d++) {
+  const k = document.createElement('button'); k.className = 'key'; k.dataset.d = d;
+  k.innerHTML = `${d}<small></small>`; pad.appendChild(k);
+}
+function render() {
+  if (!G) return;
+  const focusD = sel >= 0 && G.vals[sel] ? G.vals[sel] : highlightDigit;
+  const counts = new Array(10).fill(0);
+  G.vals.forEach((v, i) => { if (v && v === G.sol[i]) counts[v]++; });
+  for (let i = 0; i < 81; i++) {
+    const el = cells[i], v = G.vals[i];
+    let cls = 'cell';
+    if (G.given[i]) cls += ' given';
+    if (sel >= 0 && (R(i) === R(sel) || C(i) === C(sel) || B(i) === B(sel))) cls += ' zone';
+    if (focusD && v === focusD) cls += ' same';
+    if (i === sel) cls += ' sel';
+    if (v && !G.given[i] && prefs.showErr && v !== G.sol[i]) cls += ' err';
+    if (hint) {
+      if (hint.zone && hint.zone.includes(i)) cls += ' h-zone';
+      if (hint.why && hint.why.includes(i)) cls += ' h-why';
+      if (hint.target === i) cls += ' h-target';
+    }
+    if (el.className.replace(' pop', '') !== cls) el.className = cls;
+    let html = '';
+    if (v) html = String(v);
+    else if (G.notes[i]) {
+      html = '<div class="notes">' + [1,2,3,4,5,6,7,8,9].map(d => G.notes[i] & bit(d) ? (focusD === d ? `<b>${d}</b>` : `<span>${d}</span>`) : '<span></span>').join('') + '</div>';
+    }
+    if (el._h !== html) { el.innerHTML = html; el._h = html; }
+    el.setAttribute('aria-label', `Строка ${R(i) + 1}, столбец ${C(i) + 1}: ${v || 'пусто'}`);
+  }
+  pad.querySelectorAll('.key').forEach(k => {
+    const d = +k.dataset.d, left = 9 - counts[d];
+    k.disabled = left === 0;
+    k.classList.toggle('notes-mode', notesMode);
+    k.querySelector('small').innerHTML = left ? '<span class="w">ещё </span>' + left : '✓';
+  });
+  $('tNotes').setAttribute('aria-pressed', notesMode);
+  $('tUndo').disabled = !G.history.length;
+  $('diff').textContent = LEVELS[G.level].name;
+  $('sErr').textContent = G.mistakes;
+  $('sHint').textContent = G.hints;
+  $('optErr').checked = prefs.showErr;
+  tick();
+}
+function tick() { $('sTime').textContent = fmt(elapsed()); }
+setInterval(() => { if (runStart) tick(); }, 1000);
+
+// ================= Input =================
+function snapshot() { G.history.push({ vals: G.vals.slice(), notes: G.notes.slice() }); if (G.history.length > 200) G.history.shift(); }
+function setValue(i, d) {
+  if (!G || G.won || i < 0 || G.given[i]) return;
+  if (notesMode && d) {
+    if (G.vals[i]) return;
+    snapshot(); G.notes[i] ^= bit(d);
+  } else {
+    if (G.vals[i] === d && d) d = 0;
+    if (!d && !G.vals[i] && !G.notes[i]) return;
+    snapshot();
+    G.vals[i] = d; G.notes[i] = 0;
+    if (d) {
+      PEERS[i].forEach(p => G.notes[p] &= ~bit(d));
+      if (d !== G.sol[i]) G.mistakes++;
+      cells[i].classList.remove('pop'); void cells[i].offsetWidth; cells[i].classList.add('pop');
+    }
+  }
+  setHint(null); render(); save(); checkWin();
+}
+board.addEventListener('click', e => {
+  const el = e.target.closest('.cell'); if (!el || !G) return;
+  const i = +el.dataset.i;
+  sel = sel === i ? -1 : i;
+  highlightDigit = 0;
+  render();
+});
+pad.addEventListener('click', e => {
+  const k = e.target.closest('.key'); if (!k || !G) return;
+  const d = +k.dataset.d;
+  if (sel >= 0 && !G.given[sel]) setValue(sel, d);
+  else { highlightDigit = highlightDigit === d ? 0 : d; sel = -1; render(); }
+});
+$('tErase').onclick = () => { if (sel >= 0) setValue(sel, 0); };
+$('tNotes').onclick = () => { notesMode = !notesMode; render(); };
+$('tUndo').onclick = undo;
+function undo() {
+  if (!G || !G.history.length || G.won) return;
+  const h = G.history.pop(); G.vals = h.vals; G.notes = h.notes;
+  setHint(null); render(); save();
+}
+$('tAuto').onclick = () => {
+  if (!G || G.won) return;
+  snapshot();
+  const st = initState(G.vals.map((v, i) => v && v === G.sol[i] ? v : 0));
+  for (let i = 0; i < 81; i++) if (!G.vals[i]) G.notes[i] = st.c[i];
+  render(); save();
+};
+$('optErr').onchange = e => { prefs.showErr = e.target.checked; savePrefs(); render(); };
+$('tHint').onclick = showHint;
+$('bNew').onclick = openLevels;
+document.addEventListener('keydown', e => {
+  if (!G || document.querySelector('.overlay')) return;
+  const k = e.key;
+  if (/^[1-9]$/.test(k)) { if (sel >= 0) setValue(sel, +k); return; }
+  if (k === 'Backspace' || k === 'Delete' || k === '0') { if (sel >= 0) setValue(sel, 0); return; }
+  if (k === 'n' || k === 'N' || k === 'т' || k === 'Т') { notesMode = !notesMode; render(); return; }
+  if ((k === 'z' || k === 'я') && (e.metaKey || e.ctrlKey)) { e.preventDefault(); undo(); return; }
+  if (k === 'h' || k === 'р') { showHint(); return; }
+  const mv = { ArrowUp: -9, ArrowDown: 9, ArrowLeft: -1, ArrowRight: 1 }[k];
+  if (mv) {
+    e.preventDefault();
+    if (sel < 0) sel = 40;
+    else { const r = R(sel), c = C(sel); sel = mv === -9 ? ((r + 8) % 9) * 9 + c : mv === 9 ? ((r + 1) % 9) * 9 + c : mv === -1 ? r * 9 + (c + 8) % 9 : r * 9 + (c + 1) % 9; }
+    render();
+  }
+  if (k === 'Escape') { sel = -1; setHint(null); render(); }
+});
+document.addEventListener('visibilitychange', () => { if (document.hidden) { stopClock(); save(); } else startClock(); });
+window.addEventListener('pagehide', save);
+
+// ================= Hints =================
+const ord = (k, n) => ({ row: `строке ${n + 1}`, col: `столбце ${n + 1}`, box: `квадрате ${n + 1}` })[k];
+const hname = h => ord(h.k, h.n);
+const list = a => a.length <= 1 ? a.join('') : a.slice(0, -1).join(', ') + ' и ' + a[a.length - 1];
+function blockers(st, h, d, target) {
+  // placed copies of d that rule out the other empty cells of the house
+  const out = new Set();
+  h.cells.forEach(i => {
+    if (i === target || st.v[i]) return;
+    const p = PEERS[i].find(q => st.v[q] === d);
+    if (p !== undefined) out.add(p);
+  });
+  return [...out];
+}
+function describeSingle(st, s, viaNotes) {
+  if (s.t === 'last') return { text: `В ${hname(s.h)} осталась одна пустая клетка. Не хватает только цифры ${s.d}.`, zone: s.h.cells, why: [] };
+  if (s.t === 'hidden') {
+    if (viaNotes) return { text: `С учётом заметок: в ${hname(s.h)} цифра ${s.d} может стоять только в отмеченной клетке.`, zone: s.h.cells, why: [] };
+    const why = blockers(st, s.h, s.d, s.i);
+    const where = { box: ['квадрата', 'той же строке или столбце'], row: ['строки', 'том же столбце или квадрате'], col: ['столбца', 'той же строке или квадрате'] }[s.h.k];
+    return { text: `В ${hname(s.h)} цифра ${s.d} может стоять только в одной клетке. В остальных пустых клетках ${where[0]} она уже есть в ${where[1]} (обведено).`, zone: s.h.cells, why };
+  }
+  if (viaNotes) return { text: `С учётом заметок в отмеченной клетке осталась только цифра ${s.d}.`, zone: PEERS[s.i], why: [] };
+  const i = s.i, seen = new Set(), parts = [], why = [];
+  [['строке', ROWS[R(i)]], ['столбце', COLS[C(i)]], ['квадрате', BOXES[B(i)]]].forEach(([nm, h]) => {
+    const ds = [];
+    h.cells.forEach(q => { const v = st.v[q]; if (v && !seen.has(v)) { seen.add(v); ds.push(v); why.push(q); } });
+    if (ds.length) parts.push(`в ${nm} — ${list(ds.sort())}`);
+  });
+  return { text: `В эту клетку подходит только цифра ${s.d}. Остальные уже заняты: ${parts.join('; ')}.`, zone: PEERS[i], why };
+}
+function describeElim(e) {
+  if (e.t === 'pointing') return `В квадрате ${e.box.n + 1} цифра ${e.d} может стоять только в ${e.line.k === 'row' ? 'строке' : 'столбце'} ${e.line.n + 1} (обведено). Значит, в остальной части этого ${e.line.k === 'row' ? 'ряда' : 'столбца'} цифры ${e.d} быть не может.`;
+  if (e.t === 'claiming') return `В ${hname(e.line)} цифра ${e.d} может стоять только внутри квадрата ${e.box.n + 1} (обведено). Значит, в других клетках этого квадрата её нет.`;
+  if (e.t === 'npair') return `В двух обведённых клетках в ${hname(e.h)} возможны только цифры ${e.ds[0]} и ${e.ds[1]}. Они займут эти две клетки, поэтому из остальных клеток ${e.h.k === 'box' ? 'квадрата' : e.h.k === 'row' ? 'строки' : 'столбца'} их можно убрать.`;
+  if (e.t === 'hpair') return `Цифры ${e.ds[0]} и ${e.ds[1]} в ${hname(e.h)} помещаются только в двух обведённых клетках. Значит, другие варианты из этих клеток можно убрать.`;
+  if (e.t === 'xwing') {
+    const L = e.byRow ? 'строках' : 'столбцах', O = e.byRow ? 'столбцах' : 'строках', O2 = e.byRow ? 'столбцах' : 'строках';
+    return `«Крестокрыл»: в ${L} ${e.lines[0] + 1} и ${e.lines[1] + 1} цифра ${e.d} может стоять только в ${O} ${e.others[0] + 1} и ${e.others[1] + 1} (обведено). Она обязательно займёт два угла этого прямоугольника, поэтому в этих ${O2} в других местах её быть не может.`;
+  }
+  return '';
+}
+function showHint() {
+  if (!G || G.won) return;
+  // 1) mistakes first
+  const wrong = G.vals.findIndex((v, i) => v && !G.given[i] && v !== G.sol[i]);
+  if (wrong >= 0) {
+    setHint({ title: 'Ошибка', paras: [`Цифра ${G.vals[wrong]} в отмеченной клетке стоит неверно. С ней дальше головоломка не сойдётся.`], target: wrong, zone: [], why: [], action: { label: 'Стереть', fn: () => setValue(wrong, 0) } });
+    return;
+  }
+  G.hints++;
+  // 2) a step visible straight from the digits on the board
+  const raw = initState(G.vals);
+  let s = findSingle(raw);
+  if (s) {
+    const ds = describeSingle(raw, s, false);
+    setHint({ title: 'Подсказка', paras: [ds.text], target: s.i, zone: ds.zone, why: ds.why, action: { label: `Поставить ${s.d}`, fn: () => setValue(s.i, s.d) } });
+    sel = s.i; render(); save(); return;
+  }
+  // 3) the player's notes (where they are correct) may already unlock a digit
+  const st = initState(G.vals);
+  for (let i = 0; i < 81; i++) if (!G.vals[i] && G.notes[i] && (G.notes[i] & bit(G.sol[i]))) st.c[i] &= G.notes[i];
+  s = findSingle(st);
+  if (s) {
+    const ds = describeSingle(st, s, true);
+    setHint({ title: 'Подсказка', paras: [ds.text], target: s.i, zone: ds.zone, why: ds.why, action: { label: `Поставить ${s.d}`, fn: () => setValue(s.i, s.d) } });
+    sel = s.i; render(); save(); return;
+  }
+  // 4) an advanced elimination, applied to the notes so the next step becomes visible
+  const e = findElim(st);
+  if (e) {
+    const removed = e.elim.map(([i, m]) => i);
+    const ds = [...new Set(e.elim.flatMap(([, m]) => digits(m)))];
+    const names = { pointing: 'Цифра заперта в линии', claiming: 'Цифра заперта в квадрате', npair: 'Пара', hpair: 'Скрытая пара', xwing: 'Крестокрыл' };
+    setHint({ title: 'Приём · ' + names[e.t], paras: [describeElim(e), `Уберу ${list(ds.sort())} из заметок в клетках, выделенных цветом. После этого нажмите «Подсказка» ещё раз.`],
+      target: -1, zone: removed, why: e.cells,
+      action: { label: 'Убрать из заметок', fn: () => {
+        snapshot();
+        for (let i = 0; i < 81; i++) if (!G.vals[i]) G.notes[i] = st.c[i];
+        e.elim.forEach(([i, m]) => G.notes[i] &= ~m);
+        setHint(null); render(); save();
+      } } });
+    sel = -1; render(); save(); return;
+  }
+  // fallback: reveal the cell with the fewest options
+  let best = -1, bn = 10;
+  for (let i = 0; i < 81; i++) if (!st.v[i]) { const n = pop(st.c[i]) || 10; if (n < bn) { bn = n; best = i; } }
+  if (best < 0) return;
+  setHint({ title: 'Подсказка', paras: ['Дальше простыми приёмами не продвинуться, нужен перебор вариантов. Открою одну клетку, чтобы двигаться дальше.'], target: best, zone: PEERS[best], why: [],
+    action: { label: `Поставить ${G.sol[best]}`, fn: () => setValue(best, G.sol[best]) } });
+  sel = best; render(); save();
+}
+function setHint(h) {
+  hint = h;
+  const box = $('hint');
+  if (!h) { box.hidden = true; box.innerHTML = ''; render(); return; }
+  box.hidden = false;
+  box.innerHTML = `<h3>${h.title}</h3>${h.paras.map(p => `<p>${p}</p>`).join('')}<div class="row"><button class="btn accent" id="hAct">${h.action.label}</button><button class="btn" id="hClose">Понятно</button></div>`;
+  $('hAct').onclick = () => { const fn = h.action.fn; notesMode = false; fn(); };
+  $('hClose').onclick = () => setHint(null);
+  render();
+}
+
+// ================= Win / levels =================
+function checkWin() {
+  if (!G || G.won || !G.vals.every((v, i) => v === G.sol[i])) return;
+  stopClock(); G.won = true; save();
+  const t = G.elapsed, key = G.level, best = bests[key], rec = !best || t < best;
+  if (rec) { bests[key] = t; store.set('sudoku-best', JSON.stringify(bests)); }
+  sel = -1; render();
+  const o = overlay(`<div class="card" role="dialog" aria-label="Решено"><h2>Решено!</h2>
+    <p>${LEVELS[G.level].name} уровень · ошибок: ${G.mistakes} · подсказок: ${G.hints}</p>
+    <div class="big">${fmt(t)}</div><p>${rec ? 'Это ваш лучший результат на этом уровне.' : 'Рекорд: ' + fmt(best)}</p>
+    <div class="row"><button class="btn" id="oLv">Другой уровень</button><button class="btn primary" id="oAgain">Ещё одну</button></div></div>`);
+  o.querySelector('#oAgain').onclick = () => newGame(G.level);
+  o.querySelector('#oLv').onclick = openLevels;
+}
+let ov = null;
+function overlay(html) { closeOverlay(); ov = document.createElement('div'); ov.className = 'overlay'; ov.innerHTML = html; document.body.appendChild(ov); return ov; }
+function closeOverlay() { ov?.remove(); ov = null; }
+function openLevels() {
+  const cur = G ? G.level : prefs.level;
+  const o = overlay(`<div class="card" role="dialog" aria-label="Новая игра"><h2>Новая игра</h2><p>Каждая головоломка новая и имеет ровно одно решение.</p>
+    <div class="levels">${Object.entries(LEVELS).map(([k, L]) => `<button class="lv" data-k="${k}" aria-current="${k === cur}"><b>${L.name}</b><span>${L.desc}</span><em>${bests[k] ? 'рекорд<br>' + fmt(bests[k]) : ''}</em></button>`).join('')}</div>
+    ${G && !G.won ? '<div class="row"><button class="btn" id="oBack">Вернуться к игре</button></div>' : ''}</div>`);
+  o.querySelector('.levels').onclick = e => { const b = e.target.closest('.lv'); if (b) newGame(b.dataset.k); };
+  o.querySelector('#oBack')?.addEventListener('click', closeOverlay);
+  o.addEventListener('click', e => { if (e.target === o && G && !G.won) closeOverlay(); });
+}
+
+// ================= Boot =================
+try {
+  const g = JSON.parse(store.get('sudoku-v1'));
+  if (g && g.vals && g.sol && !g.won && LEVELS[g.level]) G = g;
+} catch (e) {}
+if (G) { startClock(); render(); } else newGame(prefs.level in LEVELS ? prefs.level : 'medium');
+})();
+</script>
+</body>
+</html>
